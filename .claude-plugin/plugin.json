@@ -1,0 +1,6 @@
+{
+  "name": "usage-band",
+  "version": "0.1.0",
+  "description": "Band above the prompt showing remaining rate-limit usage and prompt-cache time left",
+  "types": "./types/index.d.ts"
+}
