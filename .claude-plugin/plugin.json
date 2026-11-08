@@ -1,6 +1,6 @@
 {
   "name": "usage-band",
-  "version": "0.1.0",
-  "description": "Band above the prompt showing remaining rate-limit usage and prompt-cache time left",
+  "version": "0.2.0",
+  "description": "Band above the prompt showing context window fill, remaining rate-limit usage and prompt-cache time left",
   "types": "./types/index.d.ts"
 }

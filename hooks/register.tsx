@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Limit } from '../types'
+import type { Ctx, Limit } from '../types'
 
 // Prompt-cache TTL of this session (1h; set to 5 for a 5-minute cache).
 const CACHE_TTL_MIN = 60
@@ -15,6 +15,15 @@ const lastResponseAt = atom(
   null as number | null,
 )
 const now = atom({ plugin: 'usage-band', key: 'now' } as const, 0)
+const ctx = atom({ plugin: 'usage-band', key: 'ctx' } as const, null as Ctx | null)
+
+const toCtx = (c: Ctx): Ctx => ({ tokens: c.tokens, window: c.window, percent: c.percent })
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${Math.round(n / 1_000)}k`
+  return `${n}`
+}
 
 const LABEL: Record<string, string> = {
   five_hour: '5h',
@@ -38,6 +47,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const usage = await $.session.usage()
     await update($, limits, () => usage.rateLimits.map(l => ({ ...l })))
+    await update($, ctx, () => toCtx(usage.context))
     const t = await $.clock.now()
     await update($, now, () => t)
 
@@ -53,6 +63,9 @@ export const register: Register = on => {
   on('session.measure', async ($, e, next) => {
     if (e.changed.includes('rateLimits')) {
       await update($, limits, () => e.rateLimits.map(l => ({ ...l })))
+    }
+    if (e.changed.includes('context')) {
+      await update($, ctx, () => toCtx(e.context))
     }
     return next(e)
   })
@@ -71,15 +84,31 @@ export const register: Register = on => {
     const list = await read($, limits)
     const last = await read($, lastResponseAt)
     const t = await read($, now)
+    const c = await read($, ctx)
 
     // No fragments (<>...</>) in this tree: the band lays a fragment out as
     // a column, which pushed part of a segment onto the next row.
     const bodyColumns = e.props.bodyColumns
-    const BAR = bodyColumns >= 95 ? 8 : bodyColumns >= 75 ? 5 : 0
+    const BAR = bodyColumns >= 118 ? 8 : bodyColumns >= 100 ? 5 : 0
     const bar = (fraction: number) => {
       const full = Math.round(Math.min(1, Math.max(0, fraction)) * BAR)
       return '▰'.repeat(full) + '▱'.repeat(BAR - full)
     }
+
+    // Context window: how full it is (grows as the conversation does).
+    const used = c?.percent ?? null
+    const ctxColor = used === null ? undefined : used >= 80 ? 'red' : used >= 60 ? 'yellow' : 'magenta'
+    const ctxSegment = (
+      <Box key="ctx" columnGap={1} flexShrink={0}>
+        <Text bold>ctx</Text>
+        {used === null && <Text dimColor>대기 중</Text>}
+        {used !== null && BAR > 0 && <Text color={ctxColor}>{bar(used / 100)}</Text>}
+        {used !== null && <Text color={ctxColor}>{`${Math.round(used)}%`.padStart(4)}</Text>}
+        {used !== null && c?.tokens !== undefined && bodyColumns >= 100 && (
+          <Text dimColor>{`${fmtTokens(c.tokens)}/${fmtTokens(c.window)}`}</Text>
+        )}
+      </Box>
+    )
 
     const segments = list.map(l => {
       const left = Math.max(0, 100 - l.percentUsed)
@@ -120,6 +149,8 @@ export const register: Register = on => {
         {leftMs !== null && leftMs > 0 && <Text color={cacheColor}>{fmtDuration(leftMs)}</Text>}
       </Box>,
     )
+
+    segments.unshift(ctxSegment)
 
     return (
       <Box columnGap={1} paddingX={1} flexWrap="nowrap">
